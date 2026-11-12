@@ -1,0 +1,449 @@
+{
+  "name": "Job Search – Scrape & Rate (Naukri)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 8
+            }
+          ]
+        }
+      },
+      "id": "2aabcb0e-b2f3-4bf6-8350-e12431409f69",
+      "name": "Every 8 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        400,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "apifyToken",
+              "stringValue": "YOUR_APIFY_TOKEN"
+            },
+            {
+              "name": "keywords",
+              "stringValue": "Accountant, SAP FICO, Finance Analyst, Audit, Taxation"
+            },
+            {
+              "name": "maxJobs",
+              "stringValue": "10"
+            },
+            {
+              "name": "experience",
+              "stringValue": "Describe the candidate here: degree, certifications, key skills, internships and the roles you are targeting. The AI uses this text to score each job."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cee463ef-3b5f-4380-9a74-52a80cde59ae",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        608,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json;\nconst kws = String(cfg.keywords || '').split(',').map(s => s.trim()).filter(Boolean);\nconst out = [];\nfor (const k of kws) { out.push({ json: { keyword: k } }); }\nreturn out;"
+      },
+      "id": "c055e409-5652-4e51-8b0b-a58938caf1b8",
+      "name": "Build Searches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.apify.com/v2/acts/muhammetakkurtt~naukri-job-scraper/run-sync-get-dataset-items?token={{ $('Config').first().json.apifyToken }}&memory=1024",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ fetchDetails: true, keyword: $json.keyword, maxJobs: (Number($('Config').first().json.maxJobs) || 10), freshness: 'all', sortBy: 'relevance', experience: 'all' }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          },
+          "timeout": 240000
+        }
+      },
+      "id": "5335f19e-1d35-4a03-bf07-5c8a949b6f06",
+      "name": "Scrape Naukri (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1008,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "jsCode": "function stripHtml(s){ return String(s||'').replace(/<[^>]*>/g,' ').replace(/\\s+/g,' ').trim(); }\nconst out = [];\nfor (const it of $input.all()) {\n  const d = it.json;\n  let arr = Array.isArray(d) ? d : (Array.isArray(d.items) ? d.items : [d]);\n  for (const row of arr) {\n    const jd = (row && row.jobDetails) ? row.jobDetails : row;\n    if (!jd || !jd.title) continue;\n    const cd = jd.companyDetail || {};\n    const loc = (Array.isArray(jd.locations) && jd.locations[0]) ? jd.locations[0].label : (jd.location || '');\n    const sal = (jd.salaryDetail && !jd.salaryDetail.hideSalary) ? (jd.salaryDetail.label || '') : '';\n    out.push({ json: {\n      platform: 'Naukri',\n      title: jd.title || '',\n      company: cd.name || '',\n      location: loc || '',\n      applyUrl: jd.staticUrl || '',\n      salary: sal,\n      companyWebsite: cd.websiteUrl || '',\n      contactEmail: '',\n      description: stripHtml(jd.description).slice(0, 4000)\n    }});\n  }\n}\nreturn out;"
+      },
+      "id": "2dea4a8b-c0c5-4b41-95be-ea2795c8281b",
+      "name": "Normalize Naukri",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const seen = new Set();\nconst out = [];\nfor (const it of $input.all()) {\n  const j = it.json;\n  const key = (j.applyUrl && j.applyUrl.trim()) ? j.applyUrl.trim() : (String(j.title) + '|' + String(j.company));\n  if (seen.has(key)) continue;\n  seen.add(key);\n  out.push({ json: j });\n}\nreturn out;"
+      },
+      "id": "6c791fe2-d03c-4161-9c88-bc8aee584676",
+      "name": "Remove Duplicates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ model: 'claude-sonnet-4-6', max_tokens: 600, messages: [ { role: 'user', content: 'Score how well this job fits the candidate. Candidate background: ' + ($('Config').first().json.experience || '') + '. Job: ' + ($json.title||'') + ' at ' + ($json.company||'') + ' (' + ($json.location||'') + '). Description: ' + ($json.description||'') + '. Respond with ONLY minified JSON, no markdown, with keys: score (integer 0-100), verdict (one short sentence), keywords (array of up to 5 key skills from the job).' } ] }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1
+            }
+          }
+        }
+      },
+      "id": "10485f25-04da-4fca-8d28-26feac885976",
+      "name": "Rate Job (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1600,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = ($json.content && $json.content[0] ? $json.content[0].text : '{}');\nlet ai = { score: 0, verdict: '', keywords: [] };\ntry { ai = JSON.parse(raw.replace(/```json|```/g,'').trim()); } catch (e) {}\nconst job = $('Remove Duplicates').item.json;\nreturn { json: {\n  platform: job.platform,\n  title: job.title,\n  company: job.company,\n  location: job.location,\n  applyUrl: job.applyUrl,\n  salary: job.salary,\n  contactEmail: job.contactEmail,\n  score: ai.score,\n  verdict: ai.verdict,\n  keywords: Array.isArray(ai.keywords) ? ai.keywords.join(', ') : '',\n  description: job.description,\n  scoredAt: new Date().toISOString()\n} };"
+      },
+      "id": "779c088c-e2eb-4dc9-8458-cb95faa76c33",
+      "name": "Merge Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Jobs"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "platform",
+              "displayName": "platform",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "applyUrl",
+              "displayName": "applyUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "salary",
+              "displayName": "salary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "contactEmail",
+              "displayName": "contactEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "score",
+              "displayName": "score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "verdict",
+              "displayName": "verdict",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "keywords",
+              "displayName": "keywords",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scoredAt",
+              "displayName": "scoredAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "2eafabfd-d698-47fb-bd41-99ae47cd81ad",
+      "name": "Save to Jobs Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        2000,
+        1008
+      ],
+      "disabled": false
+    },
+    {
+      "parameters": {
+        "content": "## Job Search – Naukri\nScrapes Naukri via Apify, removes duplicates, scores each job with Claude and appends results to Google Sheets every 8 hours.\nSet your Apify token, keywords and background in **Config**, add Anthropic + Google Sheets credentials, and pick your sheet.",
+        "height": 160,
+        "width": 360
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        748
+      ],
+      "id": "3deda511-3f0e-4ca1-9e2a-5947c8acee32",
+      "name": "About"
+    }
+  ],
+  "connections": {
+    "Every 8 Hours": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Build Searches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Searches": {
+      "main": [
+        [
+          {
+            "node": "Scrape Naukri (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Naukri (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Normalize Naukri",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Naukri": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Rate Job (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Job (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Merge Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Score": {
+      "main": [
+        [
+          {
+            "node": "Save to Jobs Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
