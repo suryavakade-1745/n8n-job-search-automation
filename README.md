@@ -3,7 +3,7 @@
 Self-hosted n8n workflows that scrape job listings from **Naukri** and **Indeed**, remove duplicates, score every role against my profile with **Claude AI**, and log the results to **Google Sheets** — automatically, every 8 hours.
 
 
-<img width="959" height="446" alt="Screenshot 2026-11-12 230644" src="https://github.com/user-attachments/assets/cb6e4bf1-55b0-46f8-ad79-7ddb6c8d228f" />
+<img width="100%" alt="n8n job search workflow" src="images/workflow.png" />
 
 ---
 
